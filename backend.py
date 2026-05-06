@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import requests
 import os
 
 app = Flask(__name__)
+CORS(app)
 
 # 🔐 OpenAI API Key loaded from environment for security
 API_KEY = os.getenv("OPENAI_API_KEY")
@@ -114,4 +116,8 @@ Provide:
 
 # -------------------------------
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(
+        debug=bool(os.getenv("FLASK_DEBUG", "1") == "1"),
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 5000))
+    )
