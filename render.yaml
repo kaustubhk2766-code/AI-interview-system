@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: interview-assistant-api
+    runtime: python
+    runtimeVersion: "3.11.7"
+    buildCommand: "pip install --upgrade setuptools wheel && pip install -r requirements.txt"
+    startCommand: "gunicorn app:app --bind 0.0.0.0:10000 --workers 2 --timeout 60"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.7"
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_DEBUG
+        value: "False"
