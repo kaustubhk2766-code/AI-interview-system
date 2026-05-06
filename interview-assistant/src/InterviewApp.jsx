@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import './App.css';
 
-const API_URL = 'http://localhost:5000';
+const API_URL = 'https://ai-interview-system-dno5.onrender.com/';
 
 async function postJson(path, payload) {
   const response = await fetch(`${API_URL}${path}`, {
