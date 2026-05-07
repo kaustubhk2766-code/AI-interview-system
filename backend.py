@@ -26,7 +26,11 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 # -------------------------------
 # 🔹 Common Gemini Call Function
 # -------------------------------
-def call_gemini(prompt, model="gemini-2.0-flash"):
+# Models available with this API key (verified via ListModels)
+PRIMARY_MODEL = "gemini-2.0-flash"
+FALLBACK_MODEL = "gemini-2.0-flash-lite"  # lighter quota limits
+
+def call_gemini(prompt, model=PRIMARY_MODEL):
     if not API_KEY:
         return None, "Gemini API key is not set. Please set GEMINI_API_KEY in your environment."
 
@@ -52,8 +56,8 @@ def call_gemini(prompt, model="gemini-2.0-flash"):
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         if response.status_code == 429:
             # Try fallback model before giving up
-            if model == "gemini-2.0-flash":
-                return call_gemini(prompt, model="gemini-1.5-flash-latest")
+            if model == PRIMARY_MODEL:
+                return call_gemini(prompt, model=FALLBACK_MODEL)
             return None, "⏱️ API quota exceeded. Please wait a moment and try again."
         elif response.status_code != 200:
             return None, f"API Error {response.status_code}: {response.text}"
