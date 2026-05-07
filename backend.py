@@ -2,9 +2,23 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import time
 
 app = Flask(__name__)
 CORS(app)
+
+# ---- Simple rate limiter (per endpoint, global) ----
+_last_call_time = {}
+RATE_LIMIT_SECONDS = 5  # min seconds between calls per endpoint
+
+def is_rate_limited(endpoint):
+    now = time.time()
+    last = _last_call_time.get(endpoint, 0)
+    if now - last < RATE_LIMIT_SECONDS:
+        wait = round(RATE_LIMIT_SECONDS - (now - last), 1)
+        return True, wait
+    _last_call_time[endpoint] = now
+    return False, 0
 
 # 🔐 Gemini API Key loaded from environment for security
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -12,12 +26,12 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 # -------------------------------
 # 🔹 Common Gemini Call Function
 # -------------------------------
-def call_gemini(prompt):
+def call_gemini(prompt, model="gemini-2.0-flash"):
     if not API_KEY:
         return None, "Gemini API key is not set. Please set GEMINI_API_KEY in your environment."
 
     # ✅ Correct endpoint: v1beta + generateContent + API key as query param
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
     headers = {
         "Content-Type": "application/json"
     }
@@ -36,7 +50,12 @@ def call_gemini(prompt):
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30)
-        if response.status_code != 200:
+        if response.status_code == 429:
+            # Try fallback model before giving up
+            if model == "gemini-2.0-flash":
+                return call_gemini(prompt, model="gemini-1.5-flash-latest")
+            return None, "⏱️ API quota exceeded. Please wait a moment and try again."
+        elif response.status_code != 200:
             return None, f"API Error {response.status_code}: {response.text}"
 
         data = response.json()
@@ -67,6 +86,9 @@ def home():
 # -------------------------------
 @app.route("/generate-question", methods=["POST"])
 def generate_question():
+    limited, wait = is_rate_limited("generate-question")
+    if limited:
+        return jsonify({"error": f"⏱️ Please wait {wait}s before generating another question."}), 429
     try:
         data = request.json
         role = data.get("role", "")
@@ -90,6 +112,9 @@ def generate_question():
 # -------------------------------
 @app.route("/evaluate", methods=["POST"])
 def evaluate():
+    limited, wait = is_rate_limited("evaluate")
+    if limited:
+        return jsonify({"error": f"⏱️ Please wait {wait}s before evaluating again."}), 429
     try:
         data = request.json
         question = data.get("question", "")
