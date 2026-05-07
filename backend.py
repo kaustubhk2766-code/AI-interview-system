@@ -2,17 +2,12 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
-import google.generativeai as genai
 
 app = Flask(__name__)
 CORS(app)
 
 # 🔐 Gemini API Key loaded from environment for security
 API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Configure Gemini API
-if API_KEY:
-    genai.configure(api_key=API_KEY)
 
 # -------------------------------
 # 🔹 Common Gemini Call Function
@@ -21,16 +16,30 @@ def call_gemini(prompt):
     if not API_KEY:
         return None, "Gemini API key is not set. Please set GEMINI_API_KEY in your environment."
 
+    url = "https://generativeai.googleapis.com/v1beta2/models/gemini-3.5-flash:generateText"
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "prompt": {"text": prompt},
+        "temperature": 0.7,
+        "maxOutputTokens": 512
+    }
+
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        
-        print("🔍 Response:", response.text)
-        
-        if response.text:
-            return response.text, None
-        else:
-            return None, "No response from Gemini"
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code != 200:
+            return None, response.text
+
+        data = response.json()
+        candidates = data.get("candidates") or []
+        if candidates:
+            output = candidates[0].get("output") or candidates[0].get("content") or candidates[0].get("text")
+            if output:
+                return output, None
+
+        return None, "No response from Gemini"
 
     except Exception as e:
         return None, str(e)
