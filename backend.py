@@ -20,36 +20,39 @@ def is_rate_limited(endpoint):
     _last_call_time[endpoint] = now
     return False, 0
 
-# 🔐 Gemini API Key loaded from environment for security
-API_KEY = os.getenv("GEMINI_API_KEY")
+# 🔐 OpenRouter API Key loaded from environment for security
+API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # -------------------------------
-# 🔹 Common Gemini Call Function
+# 🔹 Common OpenRouter Call Function
 # -------------------------------
-# Models available with this API key (verified via ListModels)
-PRIMARY_MODEL = "gemini-2.0-flash"
-FALLBACK_MODEL = "gemini-2.0-flash-lite"  # lighter quota limits
+# Using a cost-effective model from OpenRouter
+PRIMARY_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
+FALLBACK_MODEL = "google/gemma-2-9b-it:free"
 
-def call_gemini(prompt, model=PRIMARY_MODEL):
+def call_openrouter(prompt, model=PRIMARY_MODEL):
     if not API_KEY:
-        return None, "Gemini API key is not set. Please set GEMINI_API_KEY in your environment."
+        return None, "OpenRouter API key is not set. Please set OPENROUTER_API_KEY in your environment."
 
-    # ✅ Correct endpoint: v1beta + generateContent + API key as query param
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
+    # OpenRouter API endpoint
+    url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/kaustubhk2766-code/AI-interview-system",
+        "X-Title": "AI Interview System"
     }
-    # ✅ Correct payload format for Gemini generateContent
+    # OpenRouter uses OpenAI-compatible chat completions format
     payload = {
-        "contents": [
+        "model": model,
+        "messages": [
             {
-                "parts": [{"text": prompt}]
+                "role": "user",
+                "content": prompt
             }
         ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 512
-        }
+        "temperature": 0.7,
+        "max_tokens": 512
     }
 
     try:
@@ -57,21 +60,23 @@ def call_gemini(prompt, model=PRIMARY_MODEL):
         if response.status_code == 429:
             # Try fallback model before giving up
             if model == PRIMARY_MODEL:
-                return call_gemini(prompt, model=FALLBACK_MODEL)
+                return call_openrouter(prompt, model=FALLBACK_MODEL)
             return None, "⏱️ API quota exceeded. Please wait a moment and try again."
+        elif response.status_code == 401:
+            return None, "❌ Invalid OpenRouter API Key. Check your OPENROUTER_API_KEY"
         elif response.status_code != 200:
             return None, f"API Error {response.status_code}: {response.text}"
 
         data = response.json()
-        # ✅ Correct response parsing for generateContent
-        candidates = data.get("candidates") or []
-        if candidates:
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            if parts:
-                return parts[0].get("text", ""), None
+        # Parse OpenRouter response (OpenAI-compatible format)
+        choices = data.get("choices") or []
+        if choices:
+            message = choices[0].get("message") or {}
+            content = message.get("content", "")
+            if content:
+                return content, None
 
-        return None, "No response from Gemini"
+        return None, "No response from OpenRouter"
 
     except Exception as e:
         return None, str(e)
@@ -82,7 +87,7 @@ def call_gemini(prompt, model=PRIMARY_MODEL):
 # -------------------------------
 @app.route("/")
 def home():
-    return "Backend is running with Gemini ✅"
+    return "Backend is running with OpenRouter ✅"
 
 
 # -------------------------------
@@ -100,7 +105,7 @@ def generate_question():
 
         prompt = f"Generate ONE technical interview question for a {role} with {experience} years of experience."
 
-        question, error = call_gemini(prompt)
+        question, error = call_openrouter(prompt)
 
         if error:
             return jsonify({"error": error}), 500
@@ -136,7 +141,7 @@ Provide:
 5. Learning resources
 """
 
-        feedback, error = call_gemini(prompt)
+        feedback, error = call_openrouter(prompt)
 
         if error:
             return jsonify({"error": error}), 500
