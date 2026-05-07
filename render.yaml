@@ -8,8 +8,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.7"
-      - key: OPENROUTER_API_KEY
-        value: "${OPENROUTER_API_KEY}"
+      - key: SAMBANOVA_API_KEY
+        value: "${SAMBANOVA_API_KEY}"
       - key: FLASK_ENV
         value: production
       - key: FLASK_DEBUG
