@@ -26,7 +26,7 @@ REQUEST_TIMEOUT = 30
 API_URL = "https://api.sambanova.ai/v1/chat/completions"
 
 # Working model
-MODEL = "Meta-Llama-3.1-8B-Instruct"
+MODEL = "Meta-Llama-3.3-70B-Instruct"
 
 # ========================
 # 🔹 In-Memory Cache
