@@ -9,38 +9,40 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# Get Gemini API Key
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("❌ GEMINI_API_KEY not found in environment variables!")
+# Get OpenRouter API Key
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+if not OPENROUTER_API_KEY:
+    raise ValueError("❌ OPENROUTER_API_KEY not found in environment variables!")
 
 REQUEST_TIMEOUT = 30
 
-def call_gemini(prompt):
-    """Call Google Gemini API with correct endpoint"""
+# Using a cost-effective model from OpenRouter
+PRIMARY_MODEL = "meta-llama/llama-3.1-8b-instruct:free"
+FALLBACK_MODEL = "google/gemma-2-9b-it:free"
+
+def call_openrouter(prompt, model=PRIMARY_MODEL):
+    """Call OpenRouter API with OpenAI-compatible format"""
     
-    # CORRECT Gemini API endpoint (v1beta/models/generateContent)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
-    
+    # OpenRouter API endpoint
+    url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/kaustubhk2766-code/AI-interview-system",
+        "X-Title": "AI Interview System"
     }
     
-    # Correct Gemini API payload format
+    # OpenRouter uses OpenAI-compatible chat completions format
     payload = {
-        "contents": [
+        "model": model,
+        "messages": [
             {
-                "parts": [
-                    {
-                        "text": prompt
-                    }
-                ]
+                "role": "user",
+                "content": prompt
             }
         ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 1000
-        }
+        "temperature": 0.7,
+        "max_tokens": 1000
     }
     
     try:
@@ -51,37 +53,40 @@ def call_gemini(prompt):
         
         # Handle API errors
         if response.status_code == 401:
-            return None, "❌ Invalid Gemini API Key. Check your GEMINI_API_KEY"
+            return None, "❌ Invalid OpenRouter API Key. Check your OPENROUTER_API_KEY"
         elif response.status_code == 429:
+            # Try fallback model before giving up
+            if model == PRIMARY_MODEL:
+                return call_openrouter(prompt, model=FALLBACK_MODEL)
             return None, "⏱️ Rate limit exceeded. Wait before trying again."
         elif response.status_code == 400:
             return None, f"❌ Bad request: {response.json().get('error', {}).get('message', 'Unknown error')}"
         elif response.status_code == 500:
-            return None, "🔴 Gemini server error. Try again later."
+            return None, "🔴 OpenRouter server error. Try again later."
         elif response.status_code != 200:
             return None, f"API Error: {response.status_code} - {response.text}"
         
-        # Parse Gemini response
+        # Parse OpenRouter response (OpenAI-compatible format)
         result = response.json()
         
-        # Check if response has content
-        if "candidates" not in result or len(result["candidates"]) == 0:
-            return None, "❌ No response from Gemini API"
+        # Check if response has choices
+        if "choices" not in result or len(result["choices"]) == 0:
+            return None, "❌ No response from OpenRouter API"
         
-        # Extract text from Gemini response
-        candidate = result["candidates"][0]
-        if "content" not in candidate or "parts" not in candidate["content"]:
-            return None, "❌ Invalid Gemini response format"
+        # Extract text from OpenRouter response
+        choice = result["choices"][0]
+        if "message" not in choice or "content" not in choice["message"]:
+            return None, "❌ Invalid OpenRouter response format"
         
-        text = candidate["content"]["parts"][0]["text"]
+        text = choice["message"]["content"]
         return text, None
         
     except requests.exceptions.Timeout:
-        return None, "⏱️ Request timeout. Gemini took too long to respond."
+        return None, "⏱️ Request timeout. OpenRouter took too long to respond."
     except requests.exceptions.ConnectionError:
         return None, "🌐 Connection error. Check your internet."
     except KeyError as e:
-        return None, f"❌ Error parsing Gemini response: {str(e)}"
+        return None, f"❌ Error parsing OpenRouter response: {str(e)}"
     except Exception as e:
         return None, f"Error: {str(e)}"
 
@@ -94,8 +99,8 @@ def call_gemini(prompt):
 def home():
     return jsonify({
         "status": "✅ Backend is running",
-        "api": "Google Gemini API",
-        "model": "gemini-1.5-flash-latest",
+        "api": "OpenRouter API",
+        "model": PRIMARY_MODEL,
         "endpoints": [
             "/generate-question (POST)",
             "/evaluate (POST)"
@@ -118,7 +123,7 @@ def generate_question():
 
         prompt = f"Generate ONE technical interview question for a {role} with {experience} years of experience. Keep it concise and practical."
 
-        question, error = call_gemini(prompt)
+        question, error = call_openrouter(prompt)
 
         if error:
             return jsonify({"error": error}), 500
@@ -157,7 +162,7 @@ Provide a structured evaluation:
 Keep response concise but detailed.
 """
 
-        feedback, error = call_gemini(prompt)
+        feedback, error = call_openrouter(prompt)
 
         if error:
             return jsonify({"error": error}), 500

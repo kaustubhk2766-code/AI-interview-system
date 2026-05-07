@@ -8,8 +8,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.7"
-      - key: GEMINI_API_KEY
-        value: "${GEMINI_API_KEY}"
+      - key: OPENROUTER_API_KEY
+        value: "${OPENROUTER_API_KEY}"
       - key: FLASK_ENV
         value: production
       - key: FLASK_DEBUG
