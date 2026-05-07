@@ -16,28 +16,37 @@ def call_gemini(prompt):
     if not API_KEY:
         return None, "Gemini API key is not set. Please set GEMINI_API_KEY in your environment."
 
-    url = "https://generativeai.googleapis.com/v1beta2/models/gemini-3.5-flash:generateText"
+    # ✅ Correct endpoint: v1beta + generateContent + API key as query param
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
+    # ✅ Correct payload format for Gemini generateContent
     payload = {
-        "prompt": {"text": prompt},
-        "temperature": 0.7,
-        "maxOutputTokens": 512
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 512
+        }
     }
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         if response.status_code != 200:
-            return None, response.text
+            return None, f"API Error {response.status_code}: {response.text}"
 
         data = response.json()
+        # ✅ Correct response parsing for generateContent
         candidates = data.get("candidates") or []
         if candidates:
-            output = candidates[0].get("output") or candidates[0].get("content") or candidates[0].get("text")
-            if output:
-                return output, None
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            if parts:
+                return parts[0].get("text", ""), None
 
         return None, "No response from Gemini"
 
