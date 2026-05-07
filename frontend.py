@@ -1,94 +1,101 @@
 from flask import Flask, request, jsonify
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
+from flask_cors import CORS
 import requests
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 
-# 🔐 API Key from environment (NEVER hardcode!)
-API_KEY = os.getenv("OPENAI_API_KEY")
+# Get Gemini API Key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("❌ GEMINI_API_KEY not found in environment variables!")
 
-if not API_KEY:
-    raise ValueError("❌ OPENAI_API_KEY not found in environment variables!")
+REQUEST_TIMEOUT = 30
 
-# ⏱️ Rate limiting to prevent abuse
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
-)
-
-# Request timeout to avoid hanging
-REQUEST_TIMEOUT = 30  # seconds
-
-
-# -------------------------------
-# 🔹 Common OpenAI Call Function
-# -------------------------------
-def call_openai(prompt):
-    """Call OpenAI API with error handling and timeout."""
-    url = "https://api.openai.com/v1/chat/completions"
-
+def call_gemini(prompt):
+    """Call Google Gemini API with correct endpoint"""
+    
+    # CORRECT Gemini API endpoint (v1beta/models/generateContent)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
-
-    data = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": "You are an expert technical interviewer. Provide constructive, detailed feedback."},
-            {"role": "user", "content": prompt}
+    
+    # Correct Gemini API payload format
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": prompt
+                    }
+                ]
+            }
         ],
-        "temperature": 0.7,
-        "max_tokens": 1000  # ← IMPORTANT: Limit response length to save costs
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 1000
+        }
     }
-
+    
     try:
-        response = requests.post(
-            url, 
-            headers=headers, 
-            json=data,
-            timeout=REQUEST_TIMEOUT
-        )
-
+        response = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        
         print(f"🔍 Status: {response.status_code}")
-
-        # Handle common API errors
+        print(f"🔍 Response: {response.text[:200]}")  # Log first 200 chars
+        
+        # Handle API errors
         if response.status_code == 401:
-            return None, "❌ API Key is invalid or expired. Update it in .env"
+            return None, "❌ Invalid Gemini API Key. Check your GEMINI_API_KEY"
         elif response.status_code == 429:
             return None, "⏱️ Rate limit exceeded. Wait before trying again."
+        elif response.status_code == 400:
+            return None, f"❌ Bad request: {response.json().get('error', {}).get('message', 'Unknown error')}"
         elif response.status_code == 500:
-            return None, "🔴 OpenAI server error. Try again later."
+            return None, "🔴 Gemini server error. Try again later."
         elif response.status_code != 200:
             return None, f"API Error: {response.status_code} - {response.text}"
-
+        
+        # Parse Gemini response
         result = response.json()
-        text = result["choices"][0]["message"]["content"]
+        
+        # Check if response has content
+        if "candidates" not in result or len(result["candidates"]) == 0:
+            return None, "❌ No response from Gemini API"
+        
+        # Extract text from Gemini response
+        candidate = result["candidates"][0]
+        if "content" not in candidate or "parts" not in candidate["content"]:
+            return None, "❌ Invalid Gemini response format"
+        
+        text = candidate["content"]["parts"][0]["text"]
         return text, None
-
+        
     except requests.exceptions.Timeout:
-        return None, "⏱️ Request timeout. OpenAI took too long to respond."
+        return None, "⏱️ Request timeout. Gemini took too long to respond."
     except requests.exceptions.ConnectionError:
         return None, "🌐 Connection error. Check your internet."
+    except KeyError as e:
+        return None, f"❌ Error parsing Gemini response: {str(e)}"
     except Exception as e:
         return None, f"Error: {str(e)}"
 
 
-# -------------------------------
-# 🔹 Home Route
-# -------------------------------
+# ========================
+# 🔹 Routes
+# ========================
+
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
         "status": "✅ Backend is running",
-        "api": "OpenAI GPT-4o-mini",
+        "api": "Google Gemini API",
+        "model": "gemini-1.5-flash-latest",
         "endpoints": [
             "/generate-question (POST)",
             "/evaluate (POST)"
@@ -96,11 +103,7 @@ def home():
     })
 
 
-# -------------------------------
-# 🔹 Generate Question
-# -------------------------------
 @app.route("/generate-question", methods=["POST"])
-@limiter.limit("10 per minute")  # Prevent spam
 def generate_question():
     """Generate a technical interview question based on role and experience."""
     try:
@@ -113,9 +116,9 @@ def generate_question():
         if not role or not experience:
             return jsonify({"error": "Missing 'role' or 'experience' field"}), 400
 
-        prompt = f"Generate ONE technical interview question for a {role} with {experience} years of experience. Keep it concise."
+        prompt = f"Generate ONE technical interview question for a {role} with {experience} years of experience. Keep it concise and practical."
 
-        question, error = call_openai(prompt)
+        question, error = call_gemini(prompt)
 
         if error:
             return jsonify({"error": error}), 500
@@ -126,11 +129,7 @@ def generate_question():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-# -------------------------------
-# 🔹 Evaluate Answer
-# -------------------------------
 @app.route("/evaluate", methods=["POST"])
-@limiter.limit("10 per minute")
 def evaluate():
     """Evaluate a candidate's answer to an interview question."""
     try:
@@ -158,7 +157,7 @@ Provide a structured evaluation:
 Keep response concise but detailed.
 """
 
-        feedback, error = call_openai(prompt)
+        feedback, error = call_gemini(prompt)
 
         if error:
             return jsonify({"error": error}), 500
@@ -170,16 +169,22 @@ Keep response concise but detailed.
 
 
 # ---- Error handlers ----
-@app.errorhandler(429)
-def ratelimit_handler(e):
-    return jsonify({"error": "Rate limit exceeded. Please wait before making more requests."}), 429
-
-
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"error": "Endpoint not found"}), 404
 
 
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({"error": "Internal server error"}), 500
+
+
 # ========================
+# For local development:
+# python app.py
+
+# For production (Gunicorn on Render):
+# gunicorn app:app --bind 0.0.0.0:10000
+
 if __name__ == "__main__":
     app.run(debug=False, port=5000, host="0.0.0.0")
