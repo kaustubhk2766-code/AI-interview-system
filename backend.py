@@ -2,49 +2,35 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import google.generativeai as genai
 
 app = Flask(__name__)
 CORS(app)
 
-# 🔐 OpenAI API Key loaded from environment for security
-API_KEY = os.getenv("OPENAI_API_KEY")
+# 🔐 Gemini API Key loaded from environment for security
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Configure Gemini API
+if API_KEY:
+    genai.configure(api_key=API_KEY)
 
 # -------------------------------
-# 🔹 Common OpenAI Call Function
+# 🔹 Common Gemini Call Function
 # -------------------------------
-def call_openai(prompt):
+def call_gemini(prompt):
     if not API_KEY:
-        return None, "OpenAI API key is not set. Please set OPENAI_API_KEY in your environment."
-
-    url = "https://api.openai.com/v1/chat/completions"
-
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": "gpt-4o-mini",   # fast + cheap + good
-        "messages": [
-            {"role": "system", "content": "You are an expert interviewer."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7
-    }
+        return None, "Gemini API key is not set. Please set GEMINI_API_KEY in your environment."
 
     try:
-        response = requests.post(url, headers=headers, json=data)
-
-        print("🔍 Status:", response.status_code)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        
         print("🔍 Response:", response.text)
-
-        if response.status_code != 200:
-            return None, response.text
-
-        result = response.json()
-        text = result["choices"][0]["message"]["content"]
-
-        return text, None
+        
+        if response.text:
+            return response.text, None
+        else:
+            return None, "No response from Gemini"
 
     except Exception as e:
         return None, str(e)
@@ -55,7 +41,7 @@ def call_openai(prompt):
 # -------------------------------
 @app.route("/")
 def home():
-    return "Backend is running with OpenAI ✅"
+    return "Backend is running with Gemini ✅"
 
 
 # -------------------------------
@@ -70,7 +56,7 @@ def generate_question():
 
         prompt = f"Generate ONE technical interview question for a {role} with {experience} years of experience."
 
-        question, error = call_openai(prompt)
+        question, error = call_gemini(prompt)
 
         if error:
             return jsonify({"error": error}), 500
@@ -103,7 +89,7 @@ Provide:
 5. Learning resources
 """
 
-        feedback, error = call_openai(prompt)
+        feedback, error = call_gemini(prompt)
 
         if error:
             return jsonify({"error": error}), 500
