@@ -1,226 +1,492 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import requests
-import os
-from dotenv import load_dotenv
+import { useState, useRef, useCallback } from "react";
 
-load_dotenv()
+const API_BASE = "https://ai-interview-system-1-k20m.onrender.com";
 
-app = Flask(__name__)
-CORS(app)
+// ========================
+// 🔹 API Calls
+// ========================
 
-# ========================
-# 🔹 DeepSeek API Config
-# ========================
+async function fetchQuestion(role, experience) {
+  const res = await fetch(`${API_BASE}/generate-question`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, experience }),
+  });
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+  const data = await res.json();
 
-if not DEEPSEEK_API_KEY:
-    raise ValueError("❌ DEEPSEEK_API_KEY not found in environment variables!")
+  if (!res.ok || data.error) {
+    throw new Error(data.error || "Failed to generate question");
+  }
 
-REQUEST_TIMEOUT = 30
+  return data;
+}
 
-# DeepSeek model
-MODEL = "deepseek-chat"
+async function fetchEvaluation(question, answer) {
+  const res = await fetch(`${API_BASE}/evaluate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, answer }),
+  });
 
+  const data = await res.json();
 
-# ========================
-# 🔹 DeepSeek API Function
-# ========================
+  if (!res.ok || data.error) {
+    throw new Error(data.error || "Failed to evaluate answer");
+  }
 
-def call_deepseek(prompt):
-    """Call DeepSeek API"""
+  return data;
+}
 
-    url = "https://api.deepseek.com/chat/completions"
+// ========================
+// 🔹 Reusable Components
+// ========================
 
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
+function Badge({ cached }) {
+  if (!cached) return null;
+
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: "0.07em",
+        textTransform: "uppercase",
+        padding: "3px 10px",
+        borderRadius: 999,
+        background: "#ecfdf5",
+        color: "#065f46",
+        border: "1px solid #a7f3d0",
+        marginLeft: 10,
+      }}
+    >
+      ⚡ Cached
+    </span>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        width: 16,
+        height: 16,
+        border: "2px solid #e2e8f0",
+        borderTopColor: "#6366f1",
+        borderRadius: "50%",
+        animation: "spin 0.7s linear infinite",
+        verticalAlign: "middle",
+        marginRight: 8,
+      }}
+    />
+  );
+}
+
+function ErrorBox({ message }) {
+  if (!message) return null;
+
+  return (
+    <div
+      style={{
+        background: "#fef2f2",
+        border: "1px solid #fecaca",
+        borderRadius: 12,
+        padding: "12px 16px",
+        color: "#991b1b",
+        fontSize: 13,
+        marginTop: 12,
+      }}
+    >
+      ⚠️ {message}
+    </div>
+  );
+}
+
+function SectionCard({ children }) {
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 20,
+        padding: 28,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Label({ children }) {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: "0.1em",
+        textTransform: "uppercase",
+        color: "#94a3b8",
+        marginBottom: 8,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Input({ value, onChange, placeholder }) {
+  return (
+    <input
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      style={{
+        width: "100%",
+        padding: "11px 14px",
+        border: "1px solid #e2e8f0",
+        borderRadius: 10,
+        fontSize: 14,
+        color: "#1e293b",
+        outline: "none",
+        fontFamily: "inherit",
+        background: "#f8fafc",
+        boxSizing: "border-box",
+      }}
+    />
+  );
+}
+
+function Textarea({ value, onChange, placeholder, rows = 5 }) {
+  return (
+    <textarea
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      rows={rows}
+      style={{
+        width: "100%",
+        padding: "12px 14px",
+        border: "1px solid #e2e8f0",
+        borderRadius: 10,
+        fontSize: 14,
+        color: "#1e293b",
+        outline: "none",
+        fontFamily: "inherit",
+        background: "#f8fafc",
+        resize: "vertical",
+        lineHeight: 1.6,
+        boxSizing: "border-box",
+      }}
+    />
+  );
+}
+
+function PrimaryButton({ onClick, disabled, loading, children }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || loading}
+      style={{
+        background:
+          disabled || loading
+            ? "#c7d2fe"
+            : "linear-gradient(135deg, #6366f1, #8b5cf6)",
+        color: "#fff",
+        border: "none",
+        borderRadius: 12,
+        padding: "13px 26px",
+        fontSize: 14,
+        fontWeight: 700,
+        cursor: disabled || loading ? "not-allowed" : "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+      }}
+    >
+      {loading && <Spinner />}
+      {children}
+    </button>
+  );
+}
+
+// ========================
+// 🔹 Generate Question
+// ========================
+
+function GenerateQuestion({ onQuestionGenerated }) {
+  const [role, setRole] = useState("");
+  const [experience, setExperience] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const handleGenerate = useCallback(async () => {
+    if (!role.trim() || !experience.trim()) {
+      setError("Please enter both role and experience.");
+      return;
     }
 
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        "temperature": 0.7,
-        "max_tokens": 1000
+    setLoading(true);
+    setError("");
+    setResult(null);
+
+    try {
+      const data = await fetchQuestion(role.trim(), experience.trim());
+
+      setResult(data);
+
+      if (onQuestionGenerated) {
+        onQuestionGenerated(data.question);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [role, experience, onQuestionGenerated]);
+
+  return (
+    <SectionCard>
+      <h2 style={{ marginBottom: 20 }}>🎯 Generate Question</h2>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 14,
+          marginBottom: 16,
+        }}
+      >
+        <div>
+          <Label>Job Role</Label>
+
+          <Input
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            placeholder="Frontend Developer"
+          />
+        </div>
+
+        <div>
+          <Label>Experience</Label>
+
+          <Input
+            value={experience}
+            onChange={(e) => setExperience(e.target.value)}
+            placeholder="3"
+          />
+        </div>
+      </div>
+
+      <PrimaryButton onClick={handleGenerate} loading={loading}>
+        {loading ? "Generating..." : "Generate Question"}
+      </PrimaryButton>
+
+      <ErrorBox message={error} />
+
+      {result && (
+        <div
+          style={{
+            marginTop: 20,
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: 12,
+            padding: 18,
+          }}
+        >
+          <div style={{ marginBottom: 10 }}>
+            <strong>Question</strong>
+            <Badge cached={result.cached} />
+          </div>
+
+          <p>{result.question}</p>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ========================
+// 🔹 Evaluate Answer
+// ========================
+
+function EvaluateAnswer({ prefillQuestion }) {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const prevPrefill = useRef("");
+
+  if (prefillQuestion && prefillQuestion !== prevPrefill.current) {
+    prevPrefill.current = prefillQuestion;
+    setQuestion(prefillQuestion);
+  }
+
+  const handleEvaluate = useCallback(async () => {
+    if (!question.trim() || !answer.trim()) {
+      setError("Please enter both question and answer.");
+      return;
     }
 
-    try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=REQUEST_TIMEOUT
-        )
+    setLoading(true);
+    setError("");
+    setResult(null);
 
-        print(f"🔍 Status: {response.status_code}")
-        print(f"🔍 Response: {response.text[:200]}")
+    try {
+      const data = await fetchEvaluation(question, answer);
 
-        # Handle API errors
-        if response.status_code == 401:
-            return None, "❌ Invalid DeepSeek API Key"
+      setResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [question, answer]);
 
-        elif response.status_code == 429:
-            return None, "⏱️ Rate limit exceeded. Try again later."
+  return (
+    <SectionCard>
+      <h2 style={{ marginBottom: 20 }}>📋 Evaluate Answer</h2>
 
-        elif response.status_code == 500:
-            return None, "🔴 DeepSeek server error."
+      <div style={{ marginBottom: 14 }}>
+        <Label>Question</Label>
 
-        elif response.status_code != 200:
-            return None, f"API Error: {response.status_code} - {response.text}"
+        <Textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="Enter interview question"
+          rows={3}
+        />
+      </div>
 
-        # Parse response
-        result = response.json()
+      <div style={{ marginBottom: 16 }}>
+        <Label>Answer</Label>
 
-        if "choices" not in result or len(result["choices"]) == 0:
-            return None, "❌ No response from DeepSeek API"
+        <Textarea
+          value={answer}
+          onChange={(e) => setAnswer(e.target.value)}
+          placeholder="Enter your answer"
+          rows={5}
+        />
+      </div>
 
-        text = result["choices"][0]["message"]["content"]
+      <PrimaryButton onClick={handleEvaluate} loading={loading}>
+        {loading ? "Evaluating..." : "Evaluate Answer"}
+      </PrimaryButton>
 
-        return text, None
+      <ErrorBox message={error} />
 
-    except requests.exceptions.Timeout:
-        return None, "⏱️ Request timeout."
+      {result && (
+        <div
+          style={{
+            marginTop: 20,
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: 12,
+            padding: 18,
+          }}
+        >
+          <div style={{ marginBottom: 10 }}>
+            <strong>Feedback</strong>
+            <Badge cached={result.cached} />
+          </div>
 
-    except requests.exceptions.ConnectionError:
-        return None, "🌐 Connection error."
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              fontFamily: "inherit",
+              lineHeight: 1.7,
+            }}
+          >
+            {result.feedback}
+          </pre>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
 
-    except Exception as e:
-        return None, f"Error: {str(e)}"
+// ========================
+// 🔹 Main App
+// ========================
 
+export default function InterviewApp() {
+  const [generatedQuestion, setGeneratedQuestion] = useState("");
 
-# ========================
-# 🔹 Routes
-# ========================
+  return (
+    <>
+      <style>{`
+        * {
+          box-sizing: border-box;
+        }
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({
-        "status": "✅ Backend is running",
-        "api": "DeepSeek API",
-        "model": MODEL,
-        "endpoints": [
-            "/generate-question (POST)",
-            "/evaluate (POST)"
-        ]
-    })
+        body {
+          margin: 0;
+          font-family: Arial, sans-serif;
+          background: #f1f5f9;
+        }
 
+        @keyframes spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
 
-# ========================
-# 🔹 Generate Question
-# ========================
+      <div
+        style={{
+          maxWidth: 760,
+          margin: "0 auto",
+          padding: 40,
+        }}
+      >
+        <div style={{ textAlign: "center", marginBottom: 36 }}>
+          <h1
+            style={{
+              fontSize: 36,
+              marginBottom: 10,
+              color: "#0f172a",
+            }}
+          >
+            AI Interview Assistant
+          </h1>
 
-@app.route("/generate-question", methods=["POST"])
-def generate_question():
+          <p style={{ color: "#64748b" }}>
+            Generate interview questions and evaluate answers
+          </p>
+        </div>
 
-    try:
-        data = request.json
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 20,
+          }}
+        >
+          <GenerateQuestion
+            onQuestionGenerated={setGeneratedQuestion}
+          />
 
-        role = data.get("role", "").strip()
-        experience = data.get("experience", "").strip()
+          <EvaluateAnswer
+            prefillQuestion={generatedQuestion}
+          />
+        </div>
 
-        if not role or not experience:
-            return jsonify({
-                "error": "Missing 'role' or 'experience' field"
-            }), 400
-
-        prompt = f"""
-Generate ONE technical interview question
-for a {role} with {experience} years of experience.
-
-Keep it concise and practical.
-"""
-
-        question, error = call_deepseek(prompt)
-
-        if error:
-            return jsonify({"error": error}), 500
-
-        return jsonify({"question": question}), 200
-
-    except Exception as e:
-        return jsonify({
-            "error": f"Server error: {str(e)}"
-        }), 500
-
-
-# ========================
-# 🔹 Evaluate Answer
-# ========================
-
-@app.route("/evaluate", methods=["POST"])
-def evaluate():
-
-    try:
-        data = request.json
-
-        question = data.get("question", "").strip()
-        answer = data.get("answer", "").strip()
-
-        if not question or not answer:
-            return jsonify({
-                "error": "Missing 'question' or 'answer' field"
-            }), 400
-
-        prompt = f"""
-Question: {question}
-
-Answer: {answer}
-
-Provide a structured evaluation:
-
-1. Score out of 10
-2. Strengths
-3. Weaknesses
-4. Improvements
-5. Resources
-
-Keep response concise but detailed.
-"""
-
-        feedback, error = call_deepseek(prompt)
-
-        if error:
-            return jsonify({"error": error}), 500
-
-        return jsonify({"feedback": feedback}), 200
-
-    except Exception as e:
-        return jsonify({
-            "error": f"Server error: {str(e)}"
-        }), 500
-
-
-# ========================
-# 🔹 Error Handlers
-# ========================
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({
-        "error": "Endpoint not found"
-    }), 404
-
-
-@app.errorhandler(500)
-def server_error(e):
-    return jsonify({
-        "error": "Internal server error"
-    }), 500
-
-
-# ========================
-# 🔹 Run App
-# ========================
-
-if __name__ == "__main__":
-    app.run(
-        debug=False,
-        port=5000,
-        host="0.0.0.0"
-    )
+        <div
+          style={{
+            textAlign: "center",
+            marginTop: 30,
+            color: "#94a3b8",
+            fontSize: 13,
+          }}
+        >
+          Backend Connected:
+          {" "}
+          {API_BASE}
+        </div>
+      </div>
+    </>
+  );
+}

@@ -2,7 +2,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
-import time
+import hashlib
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,45 +11,51 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# -------------------------------
-# 🔹 Simple Rate Limiter
-# -------------------------------
-_last_call_time = {}
-RATE_LIMIT_SECONDS = 5
+# ========================
+# 🔹 SambaNova Config
+# ========================
 
+SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 
-def is_rate_limited(endpoint):
-    now = time.time()
-    last = _last_call_time.get(endpoint, 0)
+if not SAMBANOVA_API_KEY:
+    raise ValueError("❌ SAMBANOVA_API_KEY not found")
 
-    if now - last < RATE_LIMIT_SECONDS:
-        wait = round(RATE_LIMIT_SECONDS - (now - last), 1)
-        return True, wait
+REQUEST_TIMEOUT = 30
 
-    _last_call_time[endpoint] = now
-    return False, 0
+# SambaNova OpenAI-compatible endpoint
+API_URL = "https://api.sambanova.ai/v1/chat/completions"
 
+# Working model
+MODEL = "Meta-Llama-3.1-8B-Instruct"
 
-# -------------------------------
-# 🔹 DeepSeek API Config
-# -------------------------------
-API_KEY = os.getenv("DEEPSEEK_API_KEY")
+# ========================
+# 🔹 In-Memory Cache
+# ========================
 
-DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+_cache = {}
 
-MODEL = "deepseek-chat"
+def cache_key(*args):
+    raw = json.dumps(args, sort_keys=True)
+    return hashlib.md5(raw.encode()).hexdigest()
 
+def get_cached(key):
+    return _cache.get(key)
 
-# -------------------------------
-# 🔹 Common DeepSeek Call Function
-# -------------------------------
-def call_deepseek(prompt):
+def set_cached(key, value):
+    if len(_cache) >= 200:
+        oldest = next(iter(_cache))
+        del _cache[oldest]
 
-    if not API_KEY:
-        return None, "❌ DEEPSEEK_API_KEY not found."
+    _cache[key] = value
+
+# ========================
+# 🔹 SambaNova Function
+# ========================
+
+def call_sambanova(prompt, max_tokens=600):
 
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {SAMBANOVA_API_KEY}",
         "Content-Type": "application/json"
     }
 
@@ -61,71 +68,65 @@ def call_deepseek(prompt):
             }
         ],
         "temperature": 0.7,
-        "max_tokens": 1000
+        "max_tokens": max_tokens
     }
 
     try:
+
         response = requests.post(
-            DEEPSEEK_URL,
+            API_URL,
             headers=headers,
             json=payload,
-            timeout=30
+            timeout=REQUEST_TIMEOUT
         )
 
-        print("🔍 Status:", response.status_code)
-        print("🔍 Response:", response.text[:300])
+        print("🔍 STATUS:", response.status_code)
+        print("🔍 RESPONSE:", response.text[:300])
 
         if response.status_code == 401:
-            return None, "❌ Invalid DeepSeek API Key"
+            return None, "❌ Invalid SambaNova API Key"
 
-        if response.status_code != 200:
+        elif response.status_code == 429:
+            return None, "⏱️ Rate limit exceeded"
+
+        elif response.status_code != 200:
             return None, f"API Error {response.status_code}: {response.text}"
 
-        data = response.json()
+        result = response.json()
 
-        if "choices" not in data:
-            return None, "❌ Invalid response from DeepSeek"
+        if "choices" not in result:
+            return None, "❌ Invalid API response"
 
-        content = data["choices"][0]["message"]["content"]
+        text = result["choices"][0]["message"]["content"]
 
-        return content, None
-
-    except requests.exceptions.Timeout:
-        return None, "⏱️ Request timeout"
-
-    except requests.exceptions.ConnectionError:
-        return None, "🌐 Connection error"
+        return text, None
 
     except Exception as e:
         return None, str(e)
 
+# ========================
+# 🔹 Routes
+# ========================
 
-# -------------------------------
-# 🔹 Home Route
-# -------------------------------
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
+
     return jsonify({
         "status": "✅ Backend running",
-        "provider": "DeepSeek API",
-        "model": MODEL
+        "provider": "SambaNova",
+        "model": MODEL,
+        "cache_size": len(_cache)
     })
 
-
-# -------------------------------
+# ========================
 # 🔹 Generate Question
-# -------------------------------
+# ========================
+
 @app.route("/generate-question", methods=["POST"])
 def generate_question():
 
-    limited, wait = is_rate_limited("generate-question")
-
-    if limited:
-        return jsonify({
-            "error": f"⏱️ Wait {wait}s before another request."
-        }), 429
-
     try:
+
         data = request.json
 
         role = data.get("role", "").strip()
@@ -136,38 +137,56 @@ def generate_question():
                 "error": "Missing role or experience"
             }), 400
 
-        prompt = f"""
-Generate ONE technical interview question
-for a {role} with {experience} years experience.
+        key = cache_key("question", role, experience)
 
-Keep it concise and practical.
+        cached = get_cached(key)
+
+        if cached:
+            print("✅ Cache hit: question")
+
+            return jsonify({
+                "question": cached,
+                "cached": True
+            })
+
+        prompt = f"""
+Generate ONE concise technical interview question
+for a {role} with {experience} years of experience.
+
+Return only the question.
 """
 
-        question, error = call_deepseek(prompt)
+        question, error = call_sambanova(
+            prompt,
+            max_tokens=200
+        )
 
         if error:
-            return jsonify({"error": error}), 500
+            return jsonify({
+                "error": error
+            }), 500
 
-        return jsonify({"question": question})
+        set_cached(key, question)
+
+        return jsonify({
+            "question": question,
+            "cached": False
+        })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e)
+        }), 500
 
-
-# -------------------------------
+# ========================
 # 🔹 Evaluate Answer
-# -------------------------------
+# ========================
+
 @app.route("/evaluate", methods=["POST"])
 def evaluate():
 
-    limited, wait = is_rate_limited("evaluate")
-
-    if limited:
-        return jsonify({
-            "error": f"⏱️ Wait {wait}s before another evaluation."
-        }), 429
-
     try:
+
         data = request.json
 
         question = data.get("question", "").strip()
@@ -178,6 +197,18 @@ def evaluate():
                 "error": "Missing question or answer"
             }), 400
 
+        key = cache_key("eval", question, answer)
+
+        cached = get_cached(key)
+
+        if cached:
+            print("✅ Cache hit: evaluation")
+
+            return jsonify({
+                "feedback": cached,
+                "cached": True
+            })
+
         prompt = f"""
 Question:
 {question}
@@ -185,47 +216,76 @@ Question:
 Answer:
 {answer}
 
-Provide:
+Evaluate concisely:
 
 1. Score out of 10
 2. Strengths
 3. Weaknesses
 4. Improvements
-5. Learning resources
+5. Learning resource
 
-Keep response concise but detailed.
+Keep it brief and direct.
 """
 
-        feedback, error = call_deepseek(prompt)
+        feedback, error = call_sambanova(
+            prompt,
+            max_tokens=600
+        )
 
         if error:
-            return jsonify({"error": error}), 500
+            return jsonify({
+                "error": error
+            }), 500
 
-        return jsonify({"feedback": feedback})
+        set_cached(key, feedback)
+
+        return jsonify({
+            "feedback": feedback,
+            "cached": False
+        })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e)
+        }), 500
 
+# ========================
+# 🔹 Cache Stats
+# ========================
 
-# -------------------------------
+@app.route("/cache-stats", methods=["GET"])
+def cache_stats():
+
+    return jsonify({
+        "cached_entries": len(_cache),
+        "max_entries": 200
+    })
+
+# ========================
 # 🔹 Error Handlers
-# -------------------------------
+# ========================
+
 @app.errorhandler(404)
 def not_found(e):
-    return jsonify({"error": "Endpoint not found"}), 404
 
+    return jsonify({
+        "error": "Endpoint not found"
+    }), 404
 
 @app.errorhandler(500)
 def server_error(e):
-    return jsonify({"error": "Internal server error"}), 500
 
+    return jsonify({
+        "error": "Internal server error"
+    }), 500
 
-# -------------------------------
-# 🔹 Run App
-# -------------------------------
+# ========================
+# 🔹 Run Server
+# ========================
+
 if __name__ == "__main__":
     app.run(
         debug=False,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", 5000))
+        port=5000
     )
