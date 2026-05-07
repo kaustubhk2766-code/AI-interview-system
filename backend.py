@@ -17,7 +17,7 @@ def call_gemini(prompt):
         return None, "Gemini API key is not set. Please set GEMINI_API_KEY in your environment."
 
     # ✅ Correct endpoint: v1beta + generateContent + API key as query param
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"
     headers = {
         "Content-Type": "application/json"
     }
