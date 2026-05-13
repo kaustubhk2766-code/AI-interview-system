@@ -15,10 +15,6 @@ CORS(app)
 # 🔹 SambaNova Config
 # ========================
 
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
-
-if not SAMBANOVA_API_KEY:
-    raise ValueError("❌ SAMBANOVA_API_KEY not found")
 
 REQUEST_TIMEOUT = 30
 
